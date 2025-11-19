@@ -1,26 +1,37 @@
 FROM python:3.10-slim
 
-# Для wkhtmltopdf нужны некоторые системные библиотеки
+# Установка системных зависимостей
 RUN apt-get update && \
-    apt-get install -y wget xz-utils xfonts-base fontconfig \
-    libxrender1 libxtst6 libjpeg62-turbo libssl3 libpng16-16 \
-    libxcb1 libx11-6 build-essential libpq-dev git && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends \
+        wget \
+        xz-utils \
+        fontconfig \
+        libxrender1 \
+        libxtst6 \
+        libjpeg62-turbo \
+        libssl3 \
+        libpng16-16 \
+        libxcb1 \
+        libx11-6 \
+        libpq5 \
+        && \
+    wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.bullseye_amd64.deb -O /tmp/wkhtmltox.deb && \
+    apt-get install -y --no-install-recommends /tmp/wkhtmltox.deb && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/wkhtmltox.deb
 
-# Установка wkhtmltopdf (версия подходит для большинства pdfkit)
-RUN wget https://github.com/wkhtmltopdf/wkhtmltopdf/releases/download/0.12.4/wkhtmltox-0.12.4_linux-generic-amd64.tar.xz -O /tmp/wkhtmltox.tar.xz && \
-    tar -xJf /tmp/wkhtmltox.tar.xz -C /tmp && \
-    cp /tmp/wkhtmltox/bin/wkhtmltopdf /usr/local/bin/ && \
-    chmod +x /usr/local/bin/wkhtmltopdf && \
-    rm -rf /tmp/wkhtmltox*
-
-# Копируем архив зависимостей
 WORKDIR /app
+
+# Копируем зависимости и устанавливаем их
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем всё приложение
-COPY . .
+# Копируем ВСЕ файлы проекта
+COPY main.py config.py requirements.txt ./
+COPY database/ ./database/
+COPY services/ ./services/
+COPY clients/ ./clients/
+COPY utils/ ./utils/
 
-# По умолчанию main.py лежит в корне репозитория
+# Запуск приложения
 CMD ["python", "main.py"]
