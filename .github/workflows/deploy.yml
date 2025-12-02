@@ -136,17 +136,17 @@ jobs:
               -e PERIOD_END=$PERIOD_END \
               --rm \
               npsreportscreator:latest
-            echo "[$(date)] NPS report generated for period: $PERIOD_START to $PERIOD_END" | sudo tee -a /var/log/nps_reports.log
+            echo "[$(date)] NPS report generated for period: $PERIOD_START to $PERIOD_END" >> /opt/nps_reports_creator/nps_reports.log
             SCRIPT_EOF
             chmod +x run_nps_report.sh
 
-            (sudo crontab -l 2>/dev/null | grep -v "run_nps_report.sh") | sudo crontab -
-            (sudo crontab -l 2>/dev/null; echo "0 3 1 * * /opt/nps_reports_creator/run_nps_report.sh >> /var/log/nps_reports_cron.log 2>&1") | sudo crontab -
+            (crontab -l 2>/dev/null | grep -v "run_nps_report.sh") | crontab -
+            (crontab -l 2>/dev/null; echo "0 3 1 * * /opt/nps_reports_creator/run_nps_report.sh >> /opt/nps_reports_creator/nps_reports_cron.log 2>&1") | crontab -
             # тестовый запуск каждые 5 минут — УДАЛИТЕ/ЗАКОММЕНТИРУЙТЕ В ПРОДАКШНЕ!
-            #(sudo crontab -l 2>/dev/null; echo "*/5 * * * * /opt/nps_reports_creator/run_nps_report.sh >> /var/log/nps_reports_test.log 2>&1") | sudo crontab -
+            #(crontab -l 2>/dev/null; echo "*/5 * * * * /opt/nps_reports_creator/run_nps_report.sh >> /opt/nps_reports_creator/nps_reports_test.log 2>&1") | crontab -
 
             echo "Cron jobs installed:"
-            sudo crontab -l
+            crontab -l
 
             echo "Cleaning up old Docker images..."
             docker images npsreportscreator --format "{{.ID}}" | tail -n +4 | xargs -r docker rmi 2>/dev/null || true
