@@ -1,15 +1,16 @@
-FROM python:3.10-slim
+FROM python:3.10-slim-bullseye
 
 # Установка системных зависимостей
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        git \
         wget \
         xz-utils \
         fontconfig \
         libxrender1 \
         libxtst6 \
         libjpeg62-turbo \
-        libssl3 \
+        libssl1.1 \
         libpng16-16 \
         libxcb1 \
         libx11-6 \
