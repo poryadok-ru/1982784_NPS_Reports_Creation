@@ -68,6 +68,14 @@ jobs:
             if [ -z "$PERIOD_END" ]; then
               PERIOD_END="${{ secrets.PERIOD_END || '' }}"
             fi
+            # Если периоды все еще не заданы, используем значения по умолчанию (с 1 числа месяца по вчерашний день)
+            if [ -z "$PERIOD_START" ]; then
+              PERIOD_START=$(date +%Y-%m-01)
+            fi
+            if [ -z "$PERIOD_END" ]; then
+              PERIOD_END=$(date -d "yesterday" +%Y-%m-%d)
+            fi
+            echo "Using period: $PERIOD_START to $PERIOD_END"
             # Создаем .env файл
             cat > .env << EOF
             NPS_DB_HOST=${{ secrets.NPS_DB_HOST || '127.0.0.1' }}
@@ -97,26 +105,36 @@ jobs:
             
             sleep 10
             
-            if ! docker ps | grep -q NPSReportsCreator; then
-              echo "ERROR: Container is not running"
-              docker logs NPSReportsCreator --tail 50 2>/dev/null || echo "Cannot get logs"
+            # Check container status
+            CONTAINER_STATUS=$(docker inspect NPSReportsCreator --format='{{.State.Status}}' 2>/dev/null || echo "not_found")
+            echo "Container status: $CONTAINER_STATUS"
+            
+            if [ "$CONTAINER_STATUS" = "not_found" ]; then
+              echo "ERROR: Container not found"
               exit 1
             fi
             
-            echo "Container logs (last 30 lines):"
-            docker logs NPSReportsCreator --tail 30
-            CONTAINER_STATUS=$(docker inspect NPSReportsCreator --format='{{.State.Status}}')
-            echo "Container status: $CONTAINER_STATUS"
+            # Show container logs
+            echo "Container logs (last 50 lines):"
+            docker logs NPSReportsCreator --tail 50 2>/dev/null || echo "Cannot get logs"
             
             if [ "$CONTAINER_STATUS" = "exited" ]; then
               EXIT_CODE=$(docker inspect NPSReportsCreator --format='{{.State.ExitCode}}')
+              echo "Container exit code: $EXIT_CODE"
               if [ "$EXIT_CODE" -eq 0 ]; then
                 echo "Container completed successfully with exit code: $EXIT_CODE"
+                echo "This is normal for one-time tasks. Container finished its work."
               else
                 echo "ERROR: Container exited with code: $EXIT_CODE"
-                docker logs NPSReportsCreator --tail 100
+                echo "Full container logs:"
+                docker logs NPSReportsCreator 2>/dev/null || echo "Cannot get logs"
                 exit 1
               fi
+            elif [ "$CONTAINER_STATUS" = "running" ]; then
+              echo "Container is running successfully"
+            else
+              echo "WARNING: Container status is: $CONTAINER_STATUS"
+              docker logs NPSReportsCreator --tail 100 2>/dev/null || echo "Cannot get logs"
             fi
             
             echo "Setting up cron job..."
