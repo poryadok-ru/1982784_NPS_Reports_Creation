@@ -34,5 +34,5 @@ COPY services/ ./services/
 COPY clients/ ./clients/
 COPY utils/ ./utils/
 
-# Запуск приложения
-CMD ["python", "main.py"]
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "-u", "main.py"]

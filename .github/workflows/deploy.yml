@@ -73,7 +73,8 @@ jobs:
               PERIOD_START=$(date +%Y-%m-01)
             fi
             if [ -z "$PERIOD_END" ]; then
-              PERIOD_END=$(date -d "yesterday" +%Y-%m-%d)
+              # Пробуем разные варианты команды date для совместимости
+              PERIOD_END=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -d "1 day ago" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d)
             fi
             echo "Using period: $PERIOD_START to $PERIOD_END"
             # Создаем .env файл
@@ -101,40 +102,57 @@ jobs:
             docker stop my-app 2>/dev/null || true
             docker rm my-app 2>/dev/null || true
             echo "Starting container with period: $PERIOD_START to $PERIOD_END"
-            docker run -d --name NPSReportsCreator --env-file .env npsreportscreator:latest
+            echo "Checking .env file exists and has content:"
+            ls -la .env && echo "--- .env file content (without secrets) ---" && cat .env | sed 's/\(.*=\)\(.*\)/\1***/' || echo ".env file not found!"
             
-            sleep 10
+            # Запускаем контейнер и сразу проверяем его статус
+            CONTAINER_ID=$(docker run -d --name NPSReportsCreator --env-file .env npsreportscreator:latest)
+            echo "Container started with ID: $CONTAINER_ID"
+            
+            # Ждем немного и проверяем статус
+            sleep 5
             
             # Check container status
             CONTAINER_STATUS=$(docker inspect NPSReportsCreator --format='{{.State.Status}}' 2>/dev/null || echo "not_found")
-            echo "Container status: $CONTAINER_STATUS"
+            echo "Container status after 5s: $CONTAINER_STATUS"
             
             if [ "$CONTAINER_STATUS" = "not_found" ]; then
               echo "ERROR: Container not found"
               exit 1
             fi
             
-            # Show container logs
-            echo "Container logs (last 50 lines):"
-            docker logs NPSReportsCreator --tail 50 2>/dev/null || echo "Cannot get logs"
+            # Показываем логи сразу
+            echo "=== Container logs (all) ==="
+            docker logs NPSReportsCreator 2>&1 || echo "Cannot get logs"
+            echo "=== End of logs ==="
+            
+            # Ждем еще немного для завершения
+            sleep 5
+            
+            # Проверяем финальный статус
+            CONTAINER_STATUS=$(docker inspect NPSReportsCreator --format='{{.State.Status}}' 2>/dev/null || echo "not_found")
+            EXIT_CODE=$(docker inspect NPSReportsCreator --format='{{.State.ExitCode}}' 2>/dev/null || echo "unknown")
+            
+            echo "Final container status: $CONTAINER_STATUS"
+            echo "Container exit code: $EXIT_CODE"
             
             if [ "$CONTAINER_STATUS" = "exited" ]; then
-              EXIT_CODE=$(docker inspect NPSReportsCreator --format='{{.State.ExitCode}}')
-              echo "Container exit code: $EXIT_CODE"
               if [ "$EXIT_CODE" -eq 0 ]; then
                 echo "Container completed successfully with exit code: $EXIT_CODE"
                 echo "This is normal for one-time tasks. Container finished its work."
               else
                 echo "ERROR: Container exited with code: $EXIT_CODE"
-                echo "Full container logs:"
-                docker logs NPSReportsCreator 2>/dev/null || echo "Cannot get logs"
+                echo "=== Full container logs (retry) ==="
+                docker logs NPSReportsCreator 2>&1 || echo "Cannot get logs"
+                echo "=== Container inspect info ==="
+                docker inspect NPSReportsCreator --format='{{json .State}}' 2>/dev/null || echo "Cannot inspect"
                 exit 1
               fi
             elif [ "$CONTAINER_STATUS" = "running" ]; then
-              echo "Container is running successfully"
+              echo "Container is still running"
             else
               echo "WARNING: Container status is: $CONTAINER_STATUS"
-              docker logs NPSReportsCreator --tail 100 2>/dev/null || echo "Cannot get logs"
+              docker logs NPSReportsCreator 2>&1 || echo "Cannot get logs"
             fi
             
             echo "Setting up cron job..."
