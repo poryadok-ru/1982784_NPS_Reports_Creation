@@ -102,11 +102,8 @@ jobs:
             docker stop my-app 2>/dev/null || true
             docker rm my-app 2>/dev/null || true
             echo "Starting container with period: $PERIOD_START to $PERIOD_END"
-            echo "Checking .env file exists and has content:"
-            ls -la .env && echo "--- .env file content (without secrets) ---" && cat .env | sed 's/\(.*=\)\(.*\)/\1***/' || echo ".env file not found!"
             
-            # Запускаем контейнер и сразу проверяем его статус
-            CONTAINER_ID=$(docker run -d --name NPSReportsCreator --env-file .env npsreportscreator:latest)
+            CONTAINER_ID=$(docker run -d --name NPSReportsCreator --network host --env-file .env npsreportscreator:latest)
             echo "Container started with ID: $CONTAINER_ID"
             
             # Ждем немного и проверяем статус
@@ -167,7 +164,7 @@ jobs:
             # Удаляем старый контейнер, если вдруг "завис"
             docker rm -f NPSReportsCreator_cron 2>/dev/null || true
             # Передаём даты как переменные окружения в контейнер
-            docker run --name NPSReportsCreator_cron --env-file .env \
+            docker run --name NPSReportsCreator_cron --network host --env-file .env \
               -e PERIOD_START=$PERIOD_START \
               -e PERIOD_END=$PERIOD_END \
               --rm \
