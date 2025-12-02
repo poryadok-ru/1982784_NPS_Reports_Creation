@@ -87,34 +87,34 @@ jobs:
             BITRIX_USER_ID=${{ secrets.BITRIX_USER_ID || '163472' }}
             EOF
 
-            sudo docker load < npsreportscreator.tar.gz
-            sudo docker stop NPSReportsCreator 2>/dev/null || true
-            sudo docker rm NPSReportsCreator 2>/dev/null || true
-            sudo docker stop my-app 2>/dev/null || true
-            sudo docker rm my-app 2>/dev/null || true
+            docker load < npsreportscreator.tar.gz
+            docker stop NPSReportsCreator 2>/dev/null || true
+            docker rm NPSReportsCreator 2>/dev/null || true
+            docker stop my-app 2>/dev/null || true
+            docker rm my-app 2>/dev/null || true
             echo "Starting container with period: $PERIOD_START to $PERIOD_END"
-            sudo docker run -d --name NPSReportsCreator --env-file .env npsreportscreator:latest
+            docker run -d --name NPSReportsCreator --env-file .env npsreportscreator:latest
             
             sleep 10
             
-            if ! sudo docker ps | grep -q NPSReportsCreator; then
+            if ! docker ps | grep -q NPSReportsCreator; then
               echo "ERROR: Container is not running"
-              sudo docker logs NPSReportsCreator --tail 50 2>/dev/null || echo "Cannot get logs"
+              docker logs NPSReportsCreator --tail 50 2>/dev/null || echo "Cannot get logs"
               exit 1
             fi
             
             echo "Container logs (last 30 lines):"
-            sudo docker logs NPSReportsCreator --tail 30
-            CONTAINER_STATUS=$(sudo docker inspect NPSReportsCreator --format='{{.State.Status}}')
+            docker logs NPSReportsCreator --tail 30
+            CONTAINER_STATUS=$(docker inspect NPSReportsCreator --format='{{.State.Status}}')
             echo "Container status: $CONTAINER_STATUS"
             
             if [ "$CONTAINER_STATUS" = "exited" ]; then
-              EXIT_CODE=$(sudo docker inspect NPSReportsCreator --format='{{.State.ExitCode}}')
+              EXIT_CODE=$(docker inspect NPSReportsCreator --format='{{.State.ExitCode}}')
               if [ "$EXIT_CODE" -eq 0 ]; then
                 echo "Container completed successfully with exit code: $EXIT_CODE"
               else
                 echo "ERROR: Container exited with code: $EXIT_CODE"
-                sudo docker logs NPSReportsCreator --tail 100
+                docker logs NPSReportsCreator --tail 100
                 exit 1
               fi
             fi
@@ -129,9 +129,9 @@ jobs:
             PERIOD_END=$(date -d "yesterday" +%Y-%m-%d)
 
             # Удаляем старый контейнер, если вдруг "завис"
-            sudo docker rm -f NPSReportsCreator_cron 2>/dev/null || true
+            docker rm -f NPSReportsCreator_cron 2>/dev/null || true
             # Передаём даты как переменные окружения в контейнер
-            sudo docker run --name NPSReportsCreator_cron --env-file .env \
+            docker run --name NPSReportsCreator_cron --env-file .env \
               -e PERIOD_START=$PERIOD_START \
               -e PERIOD_END=$PERIOD_END \
               --rm \
@@ -149,7 +149,7 @@ jobs:
             sudo crontab -l
 
             echo "Cleaning up old Docker images..."
-            sudo docker images npsreportscreator --format "{{.ID}}" | tail -n +4 | xargs -r sudo docker rmi 2>/dev/null || true
+            docker images npsreportscreator --format "{{.ID}}" | tail -n +4 | xargs -r docker rmi 2>/dev/null || true
             rm -f npsreportscreator.tar.gz
             echo "Deployment and cron setup successful!"
 
