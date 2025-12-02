@@ -37,6 +37,9 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
           script: |
+            sudo mkdir -p /opt/nps_reports_creator
+            sudo chown $USER:$USER /opt/nps_reports_creator
+            sudo chmod 755 /opt/nps_reports_creator
 
       - name: Copy Docker image to server
         uses: appleboy/scp-action@v0.1.7
@@ -46,8 +49,20 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
           source: "npsreportscreator.tar.gz"
-          target: "/opt/nps_reports_creator/"
+          target: "~/"
           strip_components: 0
+          overwrite: true
+
+      - name: Move Docker image to target directory
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script: |
+            sudo mv ~/npsreportscreator.tar.gz /opt/nps_reports_creator/
+            sudo chown $USER:$USER /opt/nps_reports_creator/npsreportscreator.tar.gz
 
       - name: Copy requirements to server
         uses: appleboy/scp-action@v0.1.7
@@ -114,16 +129,20 @@ jobs:
             sudo docker rm my-app 2>/dev/null || true
             echo "Starting container with period: $PERIOD_START to $PERIOD_END"
             sudo docker run -d --name NPSReportsCreator --env-file .env npsreportscreator:latest
+            
             sleep 10
+            
             if ! sudo docker ps | grep -q NPSReportsCreator; then
               echo "ERROR: Container is not running"
               sudo docker logs NPSReportsCreator --tail 50 2>/dev/null || echo "Cannot get logs"
               exit 1
             fi
+            
             echo "Container logs (last 30 lines):"
             sudo docker logs NPSReportsCreator --tail 30
             CONTAINER_STATUS=$(sudo docker inspect NPSReportsCreator --format='{{.State.Status}}')
             echo "Container status: $CONTAINER_STATUS"
+            
             if [ "$CONTAINER_STATUS" = "exited" ]; then
               EXIT_CODE=$(sudo docker inspect NPSReportsCreator --format='{{.State.ExitCode}}')
               if [ "$EXIT_CODE" -eq 0 ]; then
@@ -134,13 +153,16 @@ jobs:
                 exit 1
               fi
             fi
+            
             echo "Setting up cron job..."
             sudo bash -c "cat > /opt/nps_reports_creator/run_nps_report.sh" << 'SCRIPT_EOF'
             #!/bin/bash
             cd /opt/nps_reports_creator
+            
             # Определяем даты: с 1 числа месяца по вчерашний день
             PERIOD_START=$(date +%Y-%m-01)
             PERIOD_END=$(date -d "yesterday" +%Y-%m-%d)
+
             # Удаляем старый контейнер, если вдруг "завис"
             sudo docker rm -f NPSReportsCreator_cron 2>/dev/null || true
             # Передаём даты как переменные окружения в контейнер
