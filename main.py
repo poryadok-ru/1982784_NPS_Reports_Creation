@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+import argparse
+from datetime import datetime, timedelta
 from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
@@ -28,18 +30,61 @@ from utils.helpers import (
 )
 from config import (
     OUTPUT_DIR,
-    PERIOD_START,
-    PERIOD_END,
     MODEL_NAME,
     API_KEY
 )
 
 
-def main(output_dir: str = OUTPUT_DIR) -> None:
+def get_period_based_on_today():
+    """
+    Определяет период отчета:
+    - Если сегодня 1-е число: берет ПРЕДЫДУЩИЙ месяц полностью
+    - Иначе: берет с 1-го числа ТЕКУЩЕГО месяца по вчерашний день
+    """
+    today = datetime.now()
+    day_of_month = today.day
+
+    if day_of_month == 1:
+        # Если сегодня 1-е число, берем ПРЕДЫДУЩИЙ месяц полностью
+        # Первый день текущего месяца
+        first_day_of_current_month = today.replace(day=1)
+        # Последний день предыдущего месяца
+        last_day_of_prev_month = first_day_of_current_month - timedelta(days=1)
+        # Первый день предыдущего месяца
+        first_day_of_prev_month = last_day_of_prev_month.replace(day=1)
+
+        period_start = first_day_of_prev_month.strftime('%Y-%m-%d')
+        period_end = last_day_of_prev_month.strftime('%Y-%m-%d')
+
+        return period_start, period_end
+    else:
+        # Если не 1-е число: с 1-го числа текущего месяца по вчерашний день
+        period_start = today.replace(day=1).strftime('%Y-%m-%d')
+
+        # Вчерашняя дата
+        yesterday = today - timedelta(days=1)
+        period_end = yesterday.strftime('%Y-%m-%d')
+
+        return period_start, period_end
+
+
+def main(output_dir: str = OUTPUT_DIR, manual_start: str = None, manual_end: str = None) -> None:
     """Главный запуск процесса генерации отчетов NPS."""
     logger = setup_logger()
+
+    # Определяем период отчета
+    if manual_start and manual_end:
+        PERIOD_START, PERIOD_END = manual_start, manual_end
+        logger.info(f"Используется ручной период: {PERIOD_START} - {PERIOD_END}")
+    else:
+        period = get_period_based_on_today()
+        if period is None:
+            logger.error("Не удалось определить период отчета")
+            return
+        PERIOD_START, PERIOD_END = period
+        logger.info(f"Автоматический период: {PERIOD_START} - {PERIOD_END}")
+
     try:
-        logger.info("Запуск процесса генерации отчетов NPS")
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         period_str = format_period_filename(PERIOD_START, PERIOD_END)
 
@@ -206,6 +251,7 @@ def main(output_dir: str = OUTPUT_DIR) -> None:
         # Финальная статистика
         logger.info(
             f"=== ОБРАБОТКА ЗАВЕРШЕНА ===\n"
+            f"Период отчета: {PERIOD_START} - {PERIOD_END}\n"
             f"Всего активных ПРК: {len(active_prks)}\n"
             f"ПРК с отзывами за период: {len(stores_now)}\n"
             f"Успешно обработано: {success_count}\n"
@@ -217,4 +263,16 @@ def main(output_dir: str = OUTPUT_DIR) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Генерация отчетов NPS')
+    parser.add_argument('--start', help='Начальная дата периода (YYYY-MM-DD)')
+    parser.add_argument('--end', help='Конечная дата периода (YYYY-MM-DD)')
+    parser.add_argument('--output', help='Директория для сохранения отчетов')
+
+    args = parser.parse_args()
+
+    # Запуск основной функции с аргументами
+    main(
+        output_dir=args.output or OUTPUT_DIR,
+        manual_start=args.start,
+        manual_end=args.end
+    )
