@@ -37,38 +37,18 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
           script: |
+            mkdir -p /opt/nps_reports_creator
+            chmod 755 /opt/nps_reports_creator
 
-      - name: Copy Docker image to server
+      - name: Copy files to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
-          source: "npsreportscreator.tar.gz"
-          target: "/opt/nps_reports_creator/"
-          strip_components: 0
-
-      - name: Copy requirements to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          port: ${{ secrets.DEPLOY_PORT || 22 }}
-          source: "requirements.txt"
-          target: "/opt/nps_reports_creator/"
-          strip_components: 0
-
-      - name: Copy other necessary files
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          port: ${{ secrets.DEPLOY_PORT || 22 }}
-          source: "Dockerfile,.dockerignore,docker-compose.yml"
-          target: "/opt/nps_reports_creator/"
+          source: "npsreportscreator.tar.gz,requirements.txt,Dockerfile"
+          target: "/opt/nps_reports_creator"
           strip_components: 0
 
       - name: Deploy and setup on server
@@ -88,7 +68,17 @@ jobs:
             if [ -z "$PERIOD_END" ]; then
               PERIOD_END="${{ secrets.PERIOD_END || '' }}"
             fi
-            sudo bash -c "cat > /opt/nps_reports_creator/.env" << EOF
+            # Если периоды все еще не заданы, используем значения по умолчанию (с 1 числа месяца по вчерашний день)
+            if [ -z "$PERIOD_START" ]; then
+              PERIOD_START=$(date +%Y-%m-01)
+            fi
+            if [ -z "$PERIOD_END" ]; then
+              # Пробуем разные варианты команды date для совместимости
+              PERIOD_END=$(date -d "yesterday" +%Y-%m-%d 2>/dev/null || date -d "1 day ago" +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d)
+            fi
+            echo "Using period: $PERIOD_START to $PERIOD_END"
+            # Создаем .env файл
+            cat > .env << EOF
             NPS_DB_HOST=${{ secrets.NPS_DB_HOST || '127.0.0.1' }}
             NPS_DB_PORT=${{ secrets.NPS_DB_PORT || '5432' }}
             NPS_DB_NAME=${{ secrets.NPS_DB_NAME || 'nps' }}
@@ -105,65 +95,95 @@ jobs:
             BITRIX_TOKEN=${{ secrets.BITRIX_TOKEN }}
             BITRIX_USER_ID=${{ secrets.BITRIX_USER_ID || '163472' }}
             EOF
-            sudo chown $USER:$USER /opt/nps_reports_creator/.env
 
-            sudo docker load < npsreportscreator.tar.gz
-            sudo docker stop NPSReportsCreator 2>/dev/null || true
-            sudo docker rm NPSReportsCreator 2>/dev/null || true
-            sudo docker stop my-app 2>/dev/null || true
-            sudo docker rm my-app 2>/dev/null || true
+            docker load < npsreportscreator.tar.gz
+            docker stop NPSReportsCreator 2>/dev/null || true
+            docker rm NPSReportsCreator 2>/dev/null || true
+            docker stop my-app 2>/dev/null || true
+            docker rm my-app 2>/dev/null || true
             echo "Starting container with period: $PERIOD_START to $PERIOD_END"
-            sudo docker run -d --name NPSReportsCreator --env-file .env npsreportscreator:latest
-            sleep 10
-            if ! sudo docker ps | grep -q NPSReportsCreator; then
-              echo "ERROR: Container is not running"
-              sudo docker logs NPSReportsCreator --tail 50 2>/dev/null || echo "Cannot get logs"
+            
+            CONTAINER_ID=$(docker run -d --name NPSReportsCreator --network host --env-file .env npsreportscreator:latest)
+            echo "Container started with ID: $CONTAINER_ID"
+            
+            # Ждем немного и проверяем статус
+            sleep 5
+            
+            # Check container status
+            CONTAINER_STATUS=$(docker inspect NPSReportsCreator --format='{{.State.Status}}' 2>/dev/null || echo "not_found")
+            echo "Container status after 5s: $CONTAINER_STATUS"
+            
+            if [ "$CONTAINER_STATUS" = "not_found" ]; then
+              echo "ERROR: Container not found"
               exit 1
             fi
-            echo "Container logs (last 30 lines):"
-            sudo docker logs NPSReportsCreator --tail 30
-            CONTAINER_STATUS=$(sudo docker inspect NPSReportsCreator --format='{{.State.Status}}')
-            echo "Container status: $CONTAINER_STATUS"
+            
+            # Показываем логи сразу
+            echo "=== Container logs (all) ==="
+            docker logs NPSReportsCreator 2>&1 || echo "Cannot get logs"
+            echo "=== End of logs ==="
+            
+            # Ждем еще немного для завершения
+            sleep 5
+            
+            # Проверяем финальный статус
+            CONTAINER_STATUS=$(docker inspect NPSReportsCreator --format='{{.State.Status}}' 2>/dev/null || echo "not_found")
+            EXIT_CODE=$(docker inspect NPSReportsCreator --format='{{.State.ExitCode}}' 2>/dev/null || echo "unknown")
+            
+            echo "Final container status: $CONTAINER_STATUS"
+            echo "Container exit code: $EXIT_CODE"
+            
             if [ "$CONTAINER_STATUS" = "exited" ]; then
-              EXIT_CODE=$(sudo docker inspect NPSReportsCreator --format='{{.State.ExitCode}}')
               if [ "$EXIT_CODE" -eq 0 ]; then
                 echo "Container completed successfully with exit code: $EXIT_CODE"
+                echo "This is normal for one-time tasks. Container finished its work."
               else
                 echo "ERROR: Container exited with code: $EXIT_CODE"
-                sudo docker logs NPSReportsCreator --tail 100
+                echo "=== Full container logs (retry) ==="
+                docker logs NPSReportsCreator 2>&1 || echo "Cannot get logs"
+                echo "=== Container inspect info ==="
+                docker inspect NPSReportsCreator --format='{{json .State}}' 2>/dev/null || echo "Cannot inspect"
                 exit 1
               fi
+            elif [ "$CONTAINER_STATUS" = "running" ]; then
+              echo "Container is still running"
+            else
+              echo "WARNING: Container status is: $CONTAINER_STATUS"
+              docker logs NPSReportsCreator 2>&1 || echo "Cannot get logs"
             fi
+            
             echo "Setting up cron job..."
-            sudo bash -c "cat > /opt/nps_reports_creator/run_nps_report.sh" << 'SCRIPT_EOF'
+            cat > run_nps_report.sh << 'SCRIPT_EOF'
             #!/bin/bash
             cd /opt/nps_reports_creator
+            
             # Определяем даты: с 1 числа месяца по вчерашний день
             PERIOD_START=$(date +%Y-%m-01)
             PERIOD_END=$(date -d "yesterday" +%Y-%m-%d)
+
             # Удаляем старый контейнер, если вдруг "завис"
-            sudo docker rm -f NPSReportsCreator_cron 2>/dev/null || true
+            docker rm -f NPSReportsCreator_cron 2>/dev/null || true
             # Передаём даты как переменные окружения в контейнер
-            sudo docker run --name NPSReportsCreator_cron --env-file .env \
+            docker run --name NPSReportsCreator_cron --network host --env-file .env \
               -e PERIOD_START=$PERIOD_START \
               -e PERIOD_END=$PERIOD_END \
               --rm \
               npsreportscreator:latest
-            echo "[$(date)] NPS report generated for period: $PERIOD_START to $PERIOD_END" | sudo tee -a /var/log/nps_reports.log
+            echo "[$(date)] NPS report generated for period: $PERIOD_START to $PERIOD_END" >> /opt/nps_reports_creator/nps_reports.log
             SCRIPT_EOF
-            sudo chmod +x /opt/nps_reports_creator/run_nps_report.sh
+            chmod +x run_nps_report.sh
 
-            (sudo crontab -l 2>/dev/null | grep -v "run_nps_report.sh") | sudo crontab -
-            (sudo crontab -l 2>/dev/null; echo "0 3 1 * * /opt/nps_reports_creator/run_nps_report.sh >> /var/log/nps_reports_cron.log 2>&1") | sudo crontab -
+            (crontab -l 2>/dev/null | grep -v "run_nps_report.sh") | crontab -
+            (crontab -l 2>/dev/null; echo "0 3 1 * * /opt/nps_reports_creator/run_nps_report.sh >> /opt/nps_reports_creator/nps_reports_cron.log 2>&1") | crontab -
             # тестовый запуск каждые 5 минут — УДАЛИТЕ/ЗАКОММЕНТИРУЙТЕ В ПРОДАКШНЕ!
-            #(sudo crontab -l 2>/dev/null; echo "*/5 * * * * /opt/nps_reports_creator/run_nps_report.sh >> /var/log/nps_reports_test.log 2>&1") | sudo crontab -
+            #(crontab -l 2>/dev/null; echo "*/5 * * * * /opt/nps_reports_creator/run_nps_report.sh >> /opt/nps_reports_creator/nps_reports_test.log 2>&1") | crontab -
 
             echo "Cron jobs installed:"
-            sudo crontab -l
+            crontab -l
 
             echo "Cleaning up old Docker images..."
-            sudo docker images npsreportscreator --format "{{.ID}}" | tail -n +4 | xargs -r sudo docker rmi 2>/dev/null || true
-            sudo rm -f npsreportscreator.tar.gz
+            docker images npsreportscreator --format "{{.ID}}" | tail -n +4 | xargs -r docker rmi 2>/dev/null || true
+            rm -f npsreportscreator.tar.gz
             echo "Deployment and cron setup successful!"
 
       - name: Cleanup local files
